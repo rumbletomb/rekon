@@ -25,10 +25,10 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Bash syntax
-        run: bash -n rekon.sh container/*.sh tests/*.sh
+        run: bash -n rekon.sh container/*.sh tests/*.sh .github/scripts/*.sh
 
       - name: ShellCheck
-        run: shellcheck -x rekon.sh container/*.sh tests/*.sh
+        run: shellcheck -x rekon.sh container/*.sh tests/*.sh .github/scripts/*.sh
 
       - name: Offline tests
         run: |
@@ -85,3 +85,24 @@ jobs:
               --non-interactive \
               --only report
           done
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - validate
+      - container
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      statuses: write
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Publish verified releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/bootstrap-releases.sh
