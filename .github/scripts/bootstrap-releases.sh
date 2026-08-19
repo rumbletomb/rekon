@@ -34,8 +34,6 @@ trap 'on_error "$?" "$LINENO"' ERR
 
 post_status pending 'publishing v1.1.0 and v1.2.0'
 
-git config user.name 'github-actions[bot]'
-git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 git fetch --force --tags
 
 notes_110="$RUNNER_TEMP/v1.1.0.md"
@@ -65,6 +63,7 @@ EOF_120
 
 ensure_release() {
   local tag=$1 target=$2 title=$3 notes=$4 mark_latest=$5 actual
+  local tag_exists=false
   PHASE="checking $tag"
   if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
     printf 'El release %s ya existe; no se modifica.\n' "$tag"
@@ -72,25 +71,26 @@ ensure_release() {
   fi
 
   if git show-ref --verify --quiet "refs/tags/$tag"; then
+    tag_exists=true
     actual=$(git rev-list -n 1 "$tag")
     if [[ $actual != "$target" ]]; then
       printf 'El tag %s apunta a %s, no a %s\n' "$tag" "$actual" "$target" >&2
       return 1
     fi
-  else
-    PHASE="creating tag $tag"
-    git tag -a "$tag" "$target" -m "$title"
-    git push origin "refs/tags/$tag"
   fi
 
   PHASE="creating release $tag"
   local -a args=(
     release create "$tag"
     --repo "$GITHUB_REPOSITORY"
-    --verify-tag
     --title "$title"
     --notes-file "$notes"
   )
+  if [[ $tag_exists == true ]]; then
+    args+=(--verify-tag)
+  else
+    args+=(--target "$target")
+  fi
   if [[ $mark_latest == true ]]; then
     args+=(--latest)
   else
