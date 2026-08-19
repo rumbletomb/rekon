@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Publish selected release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.REKON_RELEASE_TOKEN }}
           TAG: ${{ inputs.tag }}
           TARGET: ${{ inputs.target }}
           TITLE: ${{ inputs.title }}
