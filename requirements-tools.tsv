@@ -18,21 +18,24 @@ http	httpx	deteccion HTTP y tecnologias	preferred	PDTM
 http	whatweb	fingerprint web complementario	optional	package-manager
 http	wafw00f	deteccion de WAF	optional	package-manager
 crawl	katana	crawler HTTP y JavaScript principal	preferred	PDTM
-crawl	hakrawler	crawler complementario en perfil deep	optional	Go
+crawl	hakrawler	crawler complementario en perfiles deep y API	optional	Go
 crawl	gau	URLs historicas	optional	Go
 crawl	waybackurls	URLs historicas complementarias	optional	Go
 fuzz	ffuf	directorios, ficheros, parametros GET y vhosts	preferred	package-manager/Go
 fuzz	feroxbuster	recursion web acotada en perfil deep	preferred	package-manager
 fuzz	gobuster	contraste de vhosts y fallback web	optional	package-manager/Go
-fuzz	arjun	descubrimiento eficiente de parametros GET	preferred	pipx
+fuzz	arjun	descubrimiento eficiente de parametros GET en deep y API	preferred	pipx
 tls	testssl.sh	analisis TLS principal	preferred	package-manager
 tls	sslscan	analisis TLS alternativo	fallback	package-manager
 tls	openssl	handshake y certificado TLS	fallback	package-manager
 observations	nuclei	plantillas tech/exposure/misconfig no intrusivas	preferred	PDTM
 screenshots	gowitness	capturas de servicios web	optional	Go
 services	smbclient	listado SMB anonimo	optional	package-manager
+services	rpcclient	informacion RPC SMB anonima para perfil AD	optional	samba-common-bin/samba-client
 services	ldapsearch	RootDSE LDAP anonimo	optional	ldap-utils/openldap-clients
 services	rpcinfo	inventario RPC	optional	rpcbind
 services	showmount	exports NFS	optional	nfs-common
 report	pandoc	informe HTML opcional	optional	package-manager
 wordlists	SecLists	diccionarios DNS, web y parametros	preferred	package-manager
+profiles	integrated-path-lists	rutas conservadoras API y cloud	core	repository
+container	Docker/Podman	ejecutar la pila reproducible fuera del host	optional	external-runtime

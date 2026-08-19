@@ -6,7 +6,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-readonly REKON_VERSION="1.1.0"
+readonly REKON_VERSION="1.2.0"
 readonly REKON_NAME="REKON"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 readonly SCRIPT_DIR
@@ -16,9 +16,9 @@ TARGET_TYPE=""
 TARGET_SLUG=""
 URL_TARGET=""
 SCOPE_DOMAIN=""
-WORDLIST_ROOT=""
+WORDLIST_ROOT="${REKON_WORDLIST_DIR:-}"
 PROFILE="balanced"
-OUTPUT_BASE="./rekon-output"
+OUTPUT_BASE="${REKON_OUTPUT_DIR:-./rekon-output}"
 RESUME_DIR=""
 RUN_DIR=""
 NON_INTERACTIVE=0
@@ -59,6 +59,16 @@ ENABLE_ACTIVE=1
 ENABLE_FUZZ=1
 ENABLE_SAFE_NUCLEI=1
 FFUF_RECURSION_DEPTH=0
+ENABLE_CRAWL=1
+ENABLE_SCREENSHOTS=1
+ENABLE_DNS_BRUTE=1
+ENABLE_NMAP_SAFE_SCRIPTS=1
+ENABLE_OS_DETECTION=1
+ENABLE_HTTP_PROBES=1
+ENABLE_TLS_PROBES=1
+NMAP_TIMING="-T4"
+NMAP_VERSION_MODE="--version-all"
+PROFILE_DESCRIPTION="Reconocimiento general equilibrado"
 
 META_DIR=""
 TARGET_DIR=""
@@ -71,6 +81,7 @@ CRAWL_DIR=""
 FUZZ_DIR=""
 TLS_DIR=""
 OBS_DIR=""
+PROFILE_DIR=""
 REPORT_DIR=""
 LOG_DIR=""
 STATE_DIR=""
@@ -119,7 +130,7 @@ Opciones:
   -t, --target VALOR          IPv4, IPv6, hostname o FQDN exacto (no CIDR)
   -w, --wordlists DIR         Raiz que contiene diccionarios
   -o, --output DIR            Directorio base de resultados
-  -p, --profile PERFIL        passive | balanced | deep
+  -p, --profile PERFIL        passive | balanced | deep | ad | api | cloud | ot
       --threads N             Sobrescribe concurrencia del perfil
       --rate N                Peticiones/paquetes por segundo maximos
       --max-hosts N           Maximo de hosts descubiertos que se procesan
@@ -143,7 +154,7 @@ Opciones:
   -V, --version               Version
 
 Modulos:
-  target, passive, dns, ports, services, http, crawl, fuzz, tls,
+  target, passive, dns, ports, services, http, profile, crawl, fuzz, tls,
   observations, screenshots, report
 
 Limites deliberados:
@@ -198,13 +209,25 @@ valid_port_spec() {
   done
 }
 
+valid_profile() {
+  case "${1,,}" in
+    passive|balanced|deep|ad|api|cloud|ot|active-directory) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 parse_args() {
   while (($#)); do
     case "$1" in
       -t|--target) (($# >= 2)) || die "Falta valor para $1"; TARGET=$2; shift 2 ;;
       -w|--wordlists) (($# >= 2)) || die "Falta valor para $1"; WORDLIST_ROOT=$2; shift 2 ;;
       -o|--output) (($# >= 2)) || die "Falta valor para $1"; OUTPUT_BASE=$2; shift 2 ;;
-      -p|--profile) (($# >= 2)) || die "Falta valor para $1"; PROFILE=${2,,}; shift 2 ;;
+      -p|--profile)
+        (($# >= 2)) || die "Falta valor para $1"
+        valid_profile "$2" || die "Perfil no valido: $2"
+        PROFILE=${2,,}; [[ $PROFILE == active-directory ]] && PROFILE="ad"
+        shift 2
+        ;;
       --threads) (($# >= 2)) || die "Falta valor para $1"; parse_positive_int "$2"; THREADS_OVERRIDE=$2; shift 2 ;;
       --rate) (($# >= 2)) || die "Falta valor para $1"; parse_positive_int "$2"; RATE_OVERRIDE=$2; shift 2 ;;
       --max-hosts) (($# >= 2)) || die "Falta valor para $1"; parse_positive_int "$2"; MAX_HOSTS_OVERRIDE=$2; shift 2 ;;
@@ -246,7 +269,11 @@ configure_profile() {
       FILE_WL_LIMIT=0 PARAM_WL_LIMIT=0 RESOLVER_WL_LIMIT=0
       TCP_PORT_SPEC="none" UDP_PORT_SPEC="none"
       ENABLE_ACTIVE=0 ENABLE_FUZZ=0 ENABLE_SAFE_NUCLEI=0
-      FFUF_RECURSION_DEPTH=0
+      FFUF_RECURSION_DEPTH=0 ENABLE_CRAWL=0 ENABLE_SCREENSHOTS=0 ENABLE_DNS_BRUTE=0
+      ENABLE_NMAP_SAFE_SCRIPTS=0 ENABLE_OS_DETECTION=0
+      ENABLE_HTTP_PROBES=0 ENABLE_TLS_PROBES=0
+      NMAP_TIMING="-T2" NMAP_VERSION_MODE="--version-light"
+      PROFILE_DESCRIPTION="Fuentes pasivas y consultas basicas sin escaneo activo"
       ;;
     balanced)
       THREADS=20 RATE=50 MAX_HOSTS=100 MAX_WEB_TARGETS=25 CRAWL_DEPTH=3
@@ -254,7 +281,11 @@ configure_profile() {
       FILE_WL_LIMIT=50000 PARAM_WL_LIMIT=10000 RESOLVER_WL_LIMIT=5000
       TCP_PORT_SPEC="top1000" UDP_PORT_SPEC="top50"
       ENABLE_ACTIVE=1 ENABLE_FUZZ=1 ENABLE_SAFE_NUCLEI=1
-      FFUF_RECURSION_DEPTH=0
+      FFUF_RECURSION_DEPTH=0 ENABLE_CRAWL=1 ENABLE_SCREENSHOTS=1 ENABLE_DNS_BRUTE=1
+      ENABLE_NMAP_SAFE_SCRIPTS=1 ENABLE_OS_DETECTION=1
+      ENABLE_HTTP_PROBES=1 ENABLE_TLS_PROBES=1
+      NMAP_TIMING="-T4" NMAP_VERSION_MODE="--version-all"
+      PROFILE_DESCRIPTION="Reconocimiento general equilibrado"
       ;;
     deep)
       THREADS=35 RATE=100 MAX_HOSTS=300 MAX_WEB_TARGETS=75 CRAWL_DEPTH=5
@@ -262,9 +293,65 @@ configure_profile() {
       FILE_WL_LIMIT=200000 PARAM_WL_LIMIT=30000 RESOLVER_WL_LIMIT=20000
       TCP_PORT_SPEC="all" UDP_PORT_SPEC="top200"
       ENABLE_ACTIVE=1 ENABLE_FUZZ=1 ENABLE_SAFE_NUCLEI=1
-      FFUF_RECURSION_DEPTH=2
+      FFUF_RECURSION_DEPTH=2 ENABLE_CRAWL=1 ENABLE_SCREENSHOTS=1 ENABLE_DNS_BRUTE=1
+      ENABLE_NMAP_SAFE_SCRIPTS=1 ENABLE_OS_DETECTION=1
+      ENABLE_HTTP_PROBES=1 ENABLE_TLS_PROBES=1
+      NMAP_TIMING="-T4" NMAP_VERSION_MODE="--version-all"
+      PROFILE_DESCRIPTION="Reconocimiento general exhaustivo y acotado"
       ;;
-    *) die "Perfil no valido: $PROFILE (passive, balanced o deep)" ;;
+    ad)
+      THREADS=16 RATE=25 MAX_HOSTS=150 MAX_WEB_TARGETS=20 CRAWL_DEPTH=1
+      FFUF_MAXTIME=0 STEP_TIMEOUT=1800 DNS_WL_LIMIT=20000 DIR_WL_LIMIT=0
+      FILE_WL_LIMIT=0 PARAM_WL_LIMIT=0 RESOLVER_WL_LIMIT=5000
+      TCP_PORT_SPEC="53,80,88,135,139,389,443,445,464,593,636,3268,3269,3389,5985,5986,9389"
+      UDP_PORT_SPEC="53,88,123,137,138,389,464"
+      ENABLE_ACTIVE=1 ENABLE_FUZZ=0 ENABLE_SAFE_NUCLEI=0
+      FFUF_RECURSION_DEPTH=0 ENABLE_CRAWL=0 ENABLE_SCREENSHOTS=0 ENABLE_DNS_BRUTE=1
+      ENABLE_NMAP_SAFE_SCRIPTS=0 ENABLE_OS_DETECTION=0
+      ENABLE_HTTP_PROBES=1 ENABLE_TLS_PROBES=1
+      NMAP_TIMING="-T3" NMAP_VERSION_MODE="--version-light"
+      PROFILE_DESCRIPTION="Active Directory: DNS, Kerberos, LDAP, SMB, GC y WinRM sin credenciales"
+      ;;
+    api)
+      THREADS=20 RATE=40 MAX_HOSTS=100 MAX_WEB_TARGETS=50 CRAWL_DEPTH=4
+      FFUF_MAXTIME=900 STEP_TIMEOUT=2400 DNS_WL_LIMIT=20000 DIR_WL_LIMIT=50000
+      FILE_WL_LIMIT=50000 PARAM_WL_LIMIT=20000 RESOLVER_WL_LIMIT=5000
+      TCP_PORT_SPEC="80,443,3000,4000,5000,7001,8000,8001,8080,8081,8088,8443,8888,9000,9090,9443"
+      UDP_PORT_SPEC="none"
+      ENABLE_ACTIVE=1 ENABLE_FUZZ=1 ENABLE_SAFE_NUCLEI=1
+      FFUF_RECURSION_DEPTH=1 ENABLE_CRAWL=1 ENABLE_SCREENSHOTS=1 ENABLE_DNS_BRUTE=1
+      ENABLE_NMAP_SAFE_SCRIPTS=1 ENABLE_OS_DETECTION=0
+      ENABLE_HTTP_PROBES=1 ENABLE_TLS_PROBES=1
+      NMAP_TIMING="-T4" NMAP_VERSION_MODE="--version-light"
+      PROFILE_DESCRIPTION="API: documentacion, rutas, parametros GET, crawling y tecnologias"
+      ;;
+    cloud)
+      THREADS=12 RATE=20 MAX_HOSTS=200 MAX_WEB_TARGETS=30 CRAWL_DEPTH=2
+      FFUF_MAXTIME=0 STEP_TIMEOUT=1800 DNS_WL_LIMIT=30000 DIR_WL_LIMIT=0
+      FILE_WL_LIMIT=0 PARAM_WL_LIMIT=0 RESOLVER_WL_LIMIT=5000
+      TCP_PORT_SPEC="80,443,8080,8443,9443"
+      UDP_PORT_SPEC="none"
+      ENABLE_ACTIVE=1 ENABLE_FUZZ=0 ENABLE_SAFE_NUCLEI=1
+      FFUF_RECURSION_DEPTH=0 ENABLE_CRAWL=1 ENABLE_SCREENSHOTS=1 ENABLE_DNS_BRUTE=1
+      ENABLE_NMAP_SAFE_SCRIPTS=1 ENABLE_OS_DETECTION=0
+      ENABLE_HTTP_PROBES=1 ENABLE_TLS_PROBES=1
+      NMAP_TIMING="-T3" NMAP_VERSION_MODE="--version-light"
+      PROFILE_DESCRIPTION="Cloud: DNS, CNAME, TLS, identidad federada y huellas de proveedor"
+      ;;
+    ot)
+      THREADS=4 RATE=5 MAX_HOSTS=25 MAX_WEB_TARGETS=10 CRAWL_DEPTH=1
+      FFUF_MAXTIME=0 STEP_TIMEOUT=2400 DNS_WL_LIMIT=0 DIR_WL_LIMIT=0
+      FILE_WL_LIMIT=0 PARAM_WL_LIMIT=0 RESOLVER_WL_LIMIT=0
+      TCP_PORT_SPEC="21,22,23,25,53,80,102,110,135,139,443,445,502,515,631,789,960,1089,1091,1911,1962,2222,2404,4000,4840,4911,5900,8080,8443,8883,9600,18245,20000,20547,44818,46823,47808,55000"
+      UDP_PORT_SPEC="53,67,68,69,123,161,162,500,2222,4000,9600,47808"
+      ENABLE_ACTIVE=1 ENABLE_FUZZ=0 ENABLE_SAFE_NUCLEI=0
+      FFUF_RECURSION_DEPTH=0 ENABLE_CRAWL=0 ENABLE_SCREENSHOTS=0 ENABLE_DNS_BRUTE=0
+      ENABLE_NMAP_SAFE_SCRIPTS=0 ENABLE_OS_DETECTION=0
+      ENABLE_HTTP_PROBES=0 ENABLE_TLS_PROBES=0
+      NMAP_TIMING="-T2" NMAP_VERSION_MODE="--version-light"
+      PROFILE_DESCRIPTION="OT/ICS conservador: deteccion de puertos y version ligera sin scripts de protocolo"
+      ;;
+    *) die "Perfil no valido: $PROFILE" ;;
   esac
 
   [[ -n $THREADS_OVERRIDE ]] && THREADS=$THREADS_OVERRIDE
@@ -276,6 +363,13 @@ configure_profile() {
   ((THREADS <= 200)) || die "--threads no puede superar 200"
   ((RATE <= 10000)) || die "--rate no puede superar 10000"
   ((MAX_HOSTS <= 5000)) || die "--max-hosts no puede superar 5000"
+  if [[ $PROFILE == ot ]]; then
+    ((THREADS <= 10)) || die "El perfil OT limita --threads a 10"
+    ((RATE <= 20)) || die "El perfil OT limita --rate a 20"
+    ((MAX_HOSTS <= 100)) || die "El perfil OT limita --max-hosts a 100"
+    case "$TCP_PORT_SPEC" in all|top*) die "El perfil OT exige una lista TCP explicita o none" ;; esac
+    case "$UDP_PORT_SPEC" in all|top*) die "El perfil OT exige una lista UDP explicita o none" ;; esac
+  fi
 }
 
 valid_ipv4() {
@@ -347,8 +441,11 @@ interactive_inputs() {
   if [[ -z ${PROFILE:-} ]]; then PROFILE="balanced"; fi
   if ((NON_INTERACTIVE == 0)) && [[ $PROFILE == balanced ]]; then
     local selected
-    read -r -p "Perfil [passive/balanced/deep] (balanced): " selected
-    [[ -n $selected ]] && PROFILE=${selected,,}
+    read -r -p "Perfil [passive/balanced/deep/ad/api/cloud/ot] (balanced): " selected
+    if [[ -n $selected ]]; then
+      valid_profile "$selected" || die "Perfil no valido: $selected"
+      PROFILE=${selected,,}; [[ $PROFILE == active-directory ]] && PROFILE="ad"
+    fi
   fi
 }
 
@@ -410,12 +507,13 @@ init_run() {
   FUZZ_DIR="$RUN_DIR/08-fuzzing"
   TLS_DIR="$RUN_DIR/09-tls"
   OBS_DIR="$RUN_DIR/10-observations"
+  PROFILE_DIR="$RUN_DIR/11-profile"
   REPORT_DIR="$RUN_DIR/report"
   LOG_DIR="$RUN_DIR/logs"
   STATE_DIR="$RUN_DIR/state"
   mkdir -p "$META_DIR/wordlists" "$TARGET_DIR" "$PASSIVE_DIR" "$DNS_DIR" "$PORTS_DIR" \
     "$SERVICES_DIR" "$HTTP_DIR/headers" "$CRAWL_DIR" "$FUZZ_DIR" "$TLS_DIR" \
-    "$OBS_DIR" "$REPORT_DIR" "$LOG_DIR" "$STATE_DIR"
+    "$OBS_DIR" "$PROFILE_DIR" "$REPORT_DIR" "$LOG_DIR" "$STATE_DIR"
 
   COMMAND_LOG="$LOG_DIR/commands.tsv"
   EXECUTION_LOG="$LOG_DIR/execution.log"
@@ -429,9 +527,33 @@ init_run() {
   printf '%s\n' "$TARGET" >"$META_DIR/target.txt"
   printf '%s\n' "$TARGET_TYPE" >"$META_DIR/target-type.txt"
   printf '%s\n' "$PROFILE" >"$META_DIR/profile.txt"
+  printf '%s\n' "$PROFILE_DESCRIPTION" >"$META_DIR/profile-description.txt"
   printf '%s\n' "$WORDLIST_ROOT" >"$META_DIR/wordlist-root.txt"
   printf '%s\n' "$REKON_VERSION" >"$META_DIR/rekon-version.txt"
   printf '%s\n' "$TARGET" >"$SCAN_TARGETS"
+}
+
+write_profile_policy() {
+  {
+    printf 'setting\tvalue\n'
+    printf 'profile\t%s\n' "$PROFILE"
+    printf 'description\t%s\n' "$PROFILE_DESCRIPTION"
+    printf 'threads\t%s\n' "$THREADS"
+    printf 'rate\t%s\n' "$RATE"
+    printf 'max_hosts\t%s\n' "$MAX_HOSTS"
+    printf 'tcp_ports\t%s\n' "$TCP_PORT_SPEC"
+    printf 'udp_ports\t%s\n' "$UDP_PORT_SPEC"
+    printf 'dns_bruteforce\t%s\n' "$ENABLE_DNS_BRUTE"
+    printf 'crawl\t%s\n' "$ENABLE_CRAWL"
+    printf 'fuzz\t%s\n' "$ENABLE_FUZZ"
+    printf 'nuclei_safe\t%s\n' "$ENABLE_SAFE_NUCLEI"
+    printf 'nmap_safe_scripts\t%s\n' "$ENABLE_NMAP_SAFE_SCRIPTS"
+    printf 'os_detection\t%s\n' "$ENABLE_OS_DETECTION"
+    printf 'http_probes\t%s\n' "$ENABLE_HTTP_PROBES"
+    printf 'tls_probes\t%s\n' "$ENABLE_TLS_PROBES"
+    printf 'nmap_timing\t%s\n' "$NMAP_TIMING"
+    printf 'nmap_version_mode\t%s\n' "$NMAP_VERSION_MODE"
+  } >"$META_DIR/profile-policy.tsv"
 }
 
 format_command() {
@@ -506,6 +628,12 @@ run_cmd() {
 }
 
 choose_install_mode() {
+  if [[ ${REKON_CONTAINER:-0} == 1 ]]; then
+    [[ $INSTALL_MODE == yes ]] && warn "La imagen es inmutable; reconstruyela para cambiar dependencias"
+    INSTALL_MODE="no"
+    info "Dependencias gestionadas por la imagen de contenedor"
+    return 0
+  fi
   [[ $INSTALL_MODE == ask ]] || return 0
   if ((NON_INTERACTIVE)); then
     INSTALL_MODE="no"
@@ -646,6 +774,12 @@ install_requirements() {
   ok "Fase de instalacion finalizada; los fallos opcionales constan en logs/"
 }
 
+nmap_has_raw_caps() {
+  command -v nmap >/dev/null 2>&1 || return 1
+  command -v getcap >/dev/null 2>&1 || return 1
+  getcap "$(command -v nmap)" 2>/dev/null | grep -Eq 'cap_net_raw'
+}
+
 configure_scan_privileges() {
   SCAN_PRIV_PREFIX=()
   PRIVILEGED_SCANS=0
@@ -653,6 +787,7 @@ configure_scan_privileges() {
     {
       printf 'setting\tvalue\n'
       printf 'privileged_scans\t0\n'
+      printf 'profile\t%s\n' "$PROFILE"
       printf 'tcp_ports\t%s\n' "$TCP_PORT_SPEC"
       printf 'udp_ports\t%s\n' "$UDP_PORT_SPEC"
     } >"$META_DIR/scan-policy.tsv"
@@ -674,6 +809,9 @@ configure_scan_privileges() {
   if [[ $PRIVILEGED_SCAN_MODE == yes ]]; then
     if ((EUID == 0)); then
       PRIVILEGED_SCANS=1
+    elif nmap_has_raw_caps; then
+      PRIVILEGED_SCANS=1
+      info "Escaneos raw habilitados mediante capacidades Linux de Nmap"
     elif ((DRY_RUN)); then
       PRIVILEGED_SCANS=1; SCAN_PRIV_PREFIX=(sudo)
     elif command -v sudo >/dev/null 2>&1; then
@@ -691,6 +829,7 @@ configure_scan_privileges() {
   {
     printf 'setting\tvalue\n'
     printf 'privileged_scans\t%s\n' "$PRIVILEGED_SCANS"
+    printf 'profile\t%s\n' "$PROFILE"
     printf 'tcp_ports\t%s\n' "$TCP_PORT_SPEC"
     printf 'udp_ports\t%s\n' "$UDP_PORT_SPEC"
   } >"$META_DIR/scan-policy.tsv"
@@ -713,7 +852,7 @@ pd_httpx_ready() {
 
 doctor() {
   local output=${1:-/dev/stdout}
-  local -a tools=(bash timeout curl jq dig host getent whois ping traceroute tracepath nmap masscan naabu subfinder assetfinder amass findomain dnsrecon dnsx puredns massdns gobuster httpx katana gau waybackurls hakrawler ffuf feroxbuster arjun whatweb wafw00f nuclei testssl.sh testssl sslscan openssl gowitness rpcinfo showmount smbclient ldapsearch python3 pipx go pdtm pandoc)
+  local -a tools=(bash timeout curl jq dig host getent whois ping traceroute tracepath nmap getcap masscan naabu subfinder assetfinder amass findomain dnsrecon dnsx puredns massdns gobuster httpx katana gau waybackurls hakrawler ffuf feroxbuster arjun whatweb wafw00f nuclei testssl.sh testssl sslscan openssl gowitness rpcinfo rpcclient showmount smbclient ldapsearch python3 pipx go pdtm pandoc)
   local tool status path note
   {
     printf 'tool\tstatus\tpath_or_note\n'
@@ -848,19 +987,25 @@ select_wordlists() {
   WL_RESOLVERS=$(prepare_wordlist resolvers "$src_resolvers" "$RESOLVER_WL_LIMIT")
 
   printf 'role\tsource\tprepared\tlines\n' >"$META_DIR/selected-wordlists.tsv"
-  local role source prepared lines
+  local role source prepared lines limit
   for role in subdomains vhosts directories files parameters resolvers; do
     case "$role" in
-      subdomains) source=$src_sub; prepared=$WL_SUBDOMAINS ;;
-      vhosts) source=$src_vhost; prepared=$WL_VHOSTS ;;
-      directories) source=$src_dirs; prepared=$WL_DIRS ;;
-      files) source=$src_files; prepared=$WL_FILES ;;
-      parameters) source=$src_params; prepared=$WL_PARAMS ;;
-      resolvers) source=$src_resolvers; prepared=$WL_RESOLVERS ;;
+      subdomains) source=$src_sub; prepared=$WL_SUBDOMAINS; limit=$DNS_WL_LIMIT ;;
+      vhosts) source=$src_vhost; prepared=$WL_VHOSTS; limit=$DNS_WL_LIMIT ;;
+      directories) source=$src_dirs; prepared=$WL_DIRS; limit=$DIR_WL_LIMIT ;;
+      files) source=$src_files; prepared=$WL_FILES; limit=$FILE_WL_LIMIT ;;
+      parameters) source=$src_params; prepared=$WL_PARAMS; limit=$PARAM_WL_LIMIT ;;
+      resolvers) source=$src_resolvers; prepared=$WL_RESOLVERS; limit=$RESOLVER_WL_LIMIT ;;
     esac
     lines=0; [[ -n $prepared && -f $prepared ]] && lines=$(wc -l <"$prepared")
     printf '%s\t%s\t%s\t%s\n' "$role" "${source:--}" "${prepared:--}" "$lines" >>"$META_DIR/selected-wordlists.tsv"
-    if [[ -n $prepared ]]; then ok "Diccionario $role: $source ($lines entradas)"; else warn "Sin diccionario adecuado para $role"; fi
+    if [[ -n $prepared ]]; then
+      ok "Diccionario $role: $source ($lines entradas)"
+    elif ((limit == 0)); then
+      info "Diccionario $role desactivado por el perfil $PROFILE"
+    else
+      warn "Sin diccionario adecuado para $role"
+    fi
   done
 }
 
@@ -946,7 +1091,7 @@ module_target() {
   if tool_ready whois; then
     run_cmd "WHOIS/RIR" "$TARGET_DIR/whois.txt" "$LOG_DIR/whois.err" 90 whois "$TARGET" || true
   fi
-  if ((ENABLE_ACTIVE)); then
+  if ((ENABLE_ACTIVE)) && [[ $PROFILE != ot ]]; then
     if tool_ready ping; then
       local -a ping_family=()
       [[ $TARGET_TYPE == ipv6 ]] && ping_family=(-6)
@@ -1020,7 +1165,7 @@ module_dns() {
   local candidates="$DNS_DIR/candidates.txt" resolved="$DNS_DIR/resolved-hosts.txt"
   if [[ -s $PASSIVE_DIR/hosts.txt ]]; then cp "$PASSIVE_DIR/hosts.txt" "$candidates"; else printf '%s\n' "$TARGET" >"$candidates"; fi
 
-  if [[ $TARGET_TYPE == fqdn && $ENABLE_ACTIVE -eq 1 && -n $WL_SUBDOMAINS ]]; then
+  if [[ $TARGET_TYPE == fqdn && $ENABLE_ACTIVE -eq 1 && $ENABLE_DNS_BRUTE -eq 1 && -n $WL_SUBDOMAINS ]]; then
     if ! special_use_domain "$SCOPE_DOMAIN" && tool_ready puredns && tool_ready massdns && [[ -n $WL_RESOLVERS ]]; then
       run_cmd "Resolucion masiva DNS con filtrado wildcard (Puredns)" "$DNS_DIR/bruteforce.txt" "$LOG_DIR/puredns.err" "$STEP_TIMEOUT" \
         puredns bruteforce "$WL_SUBDOMAINS" "$SCOPE_DOMAIN" --quiet --resolvers "$WL_RESOLVERS" --rate-limit "$RATE" || true
@@ -1050,7 +1195,7 @@ module_dns() {
   normalize_hosts "$resolved" "$DNS_DIR/resolved.normalized.txt"
   mv "$DNS_DIR/resolved.normalized.txt" "$resolved"
 
-  if [[ $TARGET_TYPE == fqdn && $ENABLE_ACTIVE -eq 1 ]] && tool_ready dig; then
+  if [[ $TARGET_TYPE == fqdn && $ENABLE_ACTIVE -eq 1 && $PROFILE != ot ]] && tool_ready dig; then
     run_cmd "Consulta de servidores autoritativos" "$DNS_DIR/nameservers.txt" "$LOG_DIR/nameservers.err" 30 dig +short NS "$SCOPE_DOMAIN" || true
     if ((DRY_RUN)); then printf 'ns1.%s\n' "$SCOPE_DOMAIN" >"$DNS_DIR/nameservers.txt"; fi
     local ns ns_slug
@@ -1066,7 +1211,7 @@ module_dns() {
     done < <(head -n 10 "$DNS_DIR/nameservers.txt")
   fi
 
-  if [[ $PROFILE == deep && $TARGET_TYPE == fqdn ]] && tool_ready dnsrecon; then
+  if [[ ($PROFILE == deep || $PROFILE == ad) && $TARGET_TYPE == fqdn ]] && tool_ready dnsrecon; then
     run_cmd "Enumeracion DNS estandar complementaria" "$DNS_DIR/dnsrecon.txt" "$LOG_DIR/dnsrecon.err" 900 \
       dnsrecon -d "$SCOPE_DOMAIN" -t std --threads "$THREADS" || true
   fi
@@ -1104,6 +1249,8 @@ module_ports() {
   fi
   [[ -s $SCAN_TARGETS ]] || printf '%s\n' "$TARGET" >"$SCAN_TARGETS"
   local scan_type="-sT"; ((PRIVILEGED_SCANS)) && scan_type="-sS"
+  local nmap_retries=2
+  [[ $PROFILE == ot ]] && nmap_retries=0
   local -a family_args=()
   [[ $TARGET_TYPE == ipv6 ]] && family_args=(-6)
   local -a nmap_tcp_ports=() naabu_ports=()
@@ -1115,10 +1262,10 @@ module_ports() {
   esac
 
   if [[ $TCP_PORT_SPEC != none ]]; then
-    if tool_ready naabu; then
+    if [[ $PROFILE != ot ]] && tool_ready naabu; then
       run_cmd "Descubrimiento rapido TCP con Naabu" "$PORTS_DIR/naabu.txt" "$LOG_DIR/naabu.err" "$STEP_TIMEOUT" \
         naabu -silent -list "$SCAN_TARGETS" "${naabu_ports[@]}" -rate "$RATE" -c "$THREADS" -retries 1 -timeout 1000 || true
-    elif [[ $TCP_PORT_SPEC != top* ]] && tool_ready masscan && ((PRIVILEGED_SCANS)) && [[ $TARGET_TYPE == ipv4 ]]; then
+    elif [[ $PROFILE != ot && $TCP_PORT_SPEC != top* ]] && tool_ready masscan && ((PRIVILEGED_SCANS)) && [[ $TARGET_TYPE == ipv4 ]]; then
       local masscan_ports=$TCP_PORT_SPEC
       [[ $masscan_ports == all ]] && masscan_ports="1-65535"
       run_cmd "Descubrimiento TCP de respaldo con Masscan" "$PORTS_DIR/masscan.stdout" "$LOG_DIR/masscan.err" "$STEP_TIMEOUT" \
@@ -1129,7 +1276,7 @@ module_ports() {
     if tool_ready nmap; then
       if [[ ! -s $PORTS_DIR/naabu.txt && ! -s $PORTS_DIR/masscan.list || $DRY_RUN -eq 1 ]]; then
         run_cmd "Descubrimiento TCP con Nmap" "$PORTS_DIR/nmap-discovery.stdout" "$LOG_DIR/nmap-discovery.err" "$STEP_TIMEOUT" \
-          "${SCAN_PRIV_PREFIX[@]}" nmap "${family_args[@]}" -n -Pn "$scan_type" --open --reason -T4 --max-retries 2 --max-rate "$RATE" \
+          "${SCAN_PRIV_PREFIX[@]}" nmap "${family_args[@]}" -n -Pn "$scan_type" --open --reason "$NMAP_TIMING" --max-retries "$nmap_retries" --max-rate "$RATE" \
           "${nmap_tcp_ports[@]}" -iL "$SCAN_TARGETS" -oA "$PORTS_DIR/nmap-discovery" || true
       fi
 
@@ -1145,11 +1292,12 @@ module_ports() {
       if ((DRY_RUN)) && [[ -z $ports ]]; then ports="22,80,443"; fi
 
       if [[ -n $ports ]]; then
-        local -a os_args=()
-        ((PRIVILEGED_SCANS)) && os_args=(-O --osscan-limit)
+        local -a os_args=() script_args=()
+        ((PRIVILEGED_SCANS && ENABLE_OS_DETECTION)) && os_args=(-O --osscan-limit)
+        ((ENABLE_NMAP_SAFE_SCRIPTS)) && script_args=(--script "safe and not (brute or dos or exploit or intrusive or fuzzer)" --script-timeout 45s)
         run_cmd "Validacion TCP y enumeracion detallada con Nmap" "$PORTS_DIR/nmap-services.stdout" "$LOG_DIR/nmap-services.err" "$STEP_TIMEOUT" \
-          "${SCAN_PRIV_PREFIX[@]}" nmap "${family_args[@]}" -n -Pn "$scan_type" -sV --version-all --reason -T4 --max-retries 2 --script-timeout 45s \
-          --script "safe and not (brute or dos or exploit or intrusive or fuzzer)" \
+          "${SCAN_PRIV_PREFIX[@]}" nmap "${family_args[@]}" -n -Pn "$scan_type" -sV "$NMAP_VERSION_MODE" --reason "$NMAP_TIMING" \
+          --max-retries "$nmap_retries" "${script_args[@]}" \
           "${os_args[@]}" -p "$ports" -iL "$SCAN_TARGETS" -oA "$PORTS_DIR/nmap-services" || true
       else
         warn "No se detectaron puertos TCP abiertos"
@@ -1167,10 +1315,11 @@ module_ports() {
         all) nmap_udp_ports=(-p-) ;;
         *) nmap_udp_ports=(-p "$UDP_PORT_SPEC") ;;
       esac
+      local -a udp_script_args=()
+      ((ENABLE_NMAP_SAFE_SCRIPTS)) && udp_script_args=(--script "safe and not (brute or dos or exploit or intrusive or fuzzer)" --script-timeout 45s)
       run_cmd "Descubrimiento y enumeracion UDP con Nmap" "$PORTS_DIR/nmap-udp.stdout" "$LOG_DIR/nmap-udp.err" "$STEP_TIMEOUT" \
-        "${SCAN_PRIV_PREFIX[@]}" nmap "${family_args[@]}" -n -Pn -sU -sV --version-light --open --reason -T3 \
-        --max-retries 1 --max-rate "$RATE" --script-timeout 45s \
-        --script "safe and not (brute or dos or exploit or intrusive or fuzzer)" \
+        "${SCAN_PRIV_PREFIX[@]}" nmap "${family_args[@]}" -n -Pn -sU -sV --version-light --open --reason "$NMAP_TIMING" \
+        --max-retries "$nmap_retries" --max-rate "$RATE" "${udp_script_args[@]}" \
         "${nmap_udp_ports[@]}" -iL "$SCAN_TARGETS" -oA "$PORTS_DIR/nmap-udp" || true
     elif ! tool_ready nmap; then
       warn "UDP omitido: Nmap no esta disponible"
@@ -1199,6 +1348,10 @@ module_ports() {
 module_services() {
   printf 'host\tport\tprotocol\tservice\n' >"$SERVICES_DIR/service-matrix.tsv"
   [[ -s $PORTS_DIR/open-ports.tsv ]] && cat "$PORTS_DIR/open-ports.tsv" >>"$SERVICES_DIR/service-matrix.tsv"
+  if [[ $PROFILE == ot ]]; then
+    info "Consultas activas de protocolo desactivadas por el perfil OT"
+    return 0
+  fi
   local host id ldap_host
   if tool_ready rpcinfo; then
     while IFS= read -r host; do
@@ -1225,18 +1378,25 @@ module_services() {
         smbclient -N -g -L "//$host" || true
     done < <(awk -F'\t' '($2==139 || $2==445) && $3=="tcp" {print $1}' "$PORTS_DIR/open-ports.tsv" 2>/dev/null | sort -u | head -n "$MAX_HOSTS")
   fi
+  if [[ $PROFILE == ad ]] && tool_ready rpcclient; then
+    while IFS= read -r host; do
+      [[ -n $host ]] || continue; id=$(safe_slug "$host")
+      run_cmd "RPC SMB anonimo en $host" "$SERVICES_DIR/$id-rpcclient-anonymous.txt" "$LOG_DIR/rpcclient-$id.err" 90 \
+        rpcclient -N -U "" -c srvinfo "$host" || true
+    done < <(awk -F'\t' '($2==139 || $2==445) && $3=="tcp" {print $1}' "$PORTS_DIR/open-ports.tsv" 2>/dev/null | sort -u | head -n "$MAX_HOSTS")
+  fi
   if tool_ready ldapsearch; then
     while IFS=$'\t' read -r host port; do
       [[ -n $host ]] || continue; id=$(safe_slug "$host"); ldap_host=$host
       [[ $host == *:* ]] && ldap_host="[$host]"
-      if [[ $port == 636 ]]; then
-        run_cmd "LDAPS RootDSE anonimo en $host" "$SERVICES_DIR/$id-ldaps-rootdse.txt" "$LOG_DIR/ldapsearch-$id-636.err" 90 \
-          ldapsearch -x -LLL -H "ldaps://$ldap_host:636" -s base -b "" namingContexts defaultNamingContext supportedLDAPVersion || true
+      if [[ $port == 636 || $port == 3269 ]]; then
+        run_cmd "LDAPS RootDSE anonimo en $host:$port" "$SERVICES_DIR/$id-ldaps-$port-rootdse.txt" "$LOG_DIR/ldapsearch-$id-$port.err" 90 \
+          ldapsearch -x -LLL -H "ldaps://$ldap_host:$port" -s base -b "" namingContexts defaultNamingContext rootDomainNamingContext configurationNamingContext supportedLDAPVersion || true
       else
-        run_cmd "LDAP RootDSE anonimo en $host" "$SERVICES_DIR/$id-ldap-rootdse.txt" "$LOG_DIR/ldapsearch-$id-389.err" 90 \
-          ldapsearch -x -LLL -H "ldap://$ldap_host:389" -s base -b "" namingContexts defaultNamingContext supportedLDAPVersion || true
+        run_cmd "LDAP RootDSE anonimo en $host:$port" "$SERVICES_DIR/$id-ldap-$port-rootdse.txt" "$LOG_DIR/ldapsearch-$id-$port.err" 90 \
+          ldapsearch -x -LLL -H "ldap://$ldap_host:$port" -s base -b "" namingContexts defaultNamingContext rootDomainNamingContext configurationNamingContext supportedLDAPVersion || true
       fi
-    done < <(awk -F'\t' '($2==389 || $2==636) && $3=="tcp" {print $1 "\t" $2}' "$PORTS_DIR/open-ports.tsv" 2>/dev/null | sort -u | head -n "$MAX_HOSTS")
+    done < <(awk -F'\t' '($2==389 || $2==636 || $2==3268 || $2==3269) && $3=="tcp" {print $1 "\t" $2}' "$PORTS_DIR/open-ports.tsv" 2>/dev/null | sort -u | head -n "$MAX_HOSTS")
   fi
   return 0
 }
@@ -1246,8 +1406,8 @@ default_live_urls() {
 }
 
 module_http() {
-  if ((ENABLE_ACTIVE == 0)); then
-    info "Sondeo HTTP activo desactivado en perfil passive"
+  if ((ENABLE_ACTIVE == 0 || ENABLE_HTTP_PROBES == 0)); then
+    info "Sondeo HTTP activo desactivado por el perfil $PROFILE"
     : >"$LIVE_URLS"
     return 0
   fi
@@ -1290,15 +1450,139 @@ module_http() {
     done < <(head -n "$MAX_WEB_TARGETS" "$LIVE_URLS")
   fi
 
-  if tool_ready whatweb && [[ -s $LIVE_URLS ]]; then
+  if [[ $PROFILE != ot ]] && tool_ready whatweb && [[ -s $LIVE_URLS ]]; then
     run_cmd "Fingerprint web adicional" "$HTTP_DIR/whatweb.txt" "$LOG_DIR/whatweb.err" "$STEP_TIMEOUT" \
       whatweb --no-errors --color=never -i "$LIVE_URLS" || true
   fi
-  if tool_ready wafw00f && [[ -s $LIVE_URLS ]]; then
+  if [[ $PROFILE != ot ]] && tool_ready wafw00f && [[ -s $LIVE_URLS ]]; then
     run_cmd "Deteccion WAF" "$HTTP_DIR/wafw00f.txt" "$LOG_DIR/wafw00f.err" "$STEP_TIMEOUT" \
       wafw00f -i "$LIVE_URLS" -a || true
   fi
   ok "Servicios web vivos: $(wc -l <"$LIVE_URLS")"
+  return 0
+}
+
+probe_profile_paths() {
+  local kind=$1 wordlist=$2
+  [[ -r $wordlist ]] || { warn "Lista integrada no disponible: $wordlist"; return 0; }
+  [[ -s $LIVE_URLS ]] || { info "Sin servicios web para rutas del perfil $kind"; return 0; }
+  local origins="$PROFILE_DIR/$kind-origins.txt" url origin id path path_id
+  : >"$origins"
+  while IFS= read -r url; do url_origin "$url"; printf '\n'; done <"$LIVE_URLS" | \
+    LC_ALL=C sort -u | awk -v max="$MAX_WEB_TARGETS" 'NR <= max' >"$origins"
+
+  if tool_ready ffuf; then
+    while IFS= read -r origin; do
+      [[ -n $origin ]] || continue
+      id=$(printf '%s' "$origin" | sha256sum | awk '{print substr($1,1,12)}')
+      run_cmd "Rutas conocidas $kind en $origin" "$PROFILE_DIR/$id-$kind.stdout" "$LOG_DIR/profile-$kind-$id.err" 420 \
+        ffuf -s -ac -mc 200,204,301,302,307,308,401,403,405 -fc 404 \
+        -w "$wordlist:FUZZ" -u "${origin%/}/FUZZ" -t "$THREADS" -rate "$RATE" \
+        -timeout 10 -maxtime 360 -of json -o "$PROFILE_DIR/$id-$kind.json" || true
+    done <"$origins"
+  elif tool_ready curl; then
+    while IFS= read -r origin; do
+      [[ -n $origin ]] || continue
+      while IFS= read -r path; do
+        [[ -n $path && $path != \#* ]] || continue
+        path_id=$(printf '%s/%s' "$origin" "$path" | sha256sum | awk '{print substr($1,1,12)}')
+        run_cmd "Ruta $kind ${origin%/}/$path" "$PROFILE_DIR/$path_id-$kind-headers.txt" "$LOG_DIR/profile-$kind-$path_id.err" 30 \
+          curl -k -sS -I --connect-timeout 5 --max-time 20 "${origin%/}/$path" || true
+      done <"$wordlist"
+    done <"$origins"
+  else
+    warn "No hay FFUF ni Curl; rutas integradas del perfil $kind omitidas"
+  fi
+}
+
+module_profile_ad() {
+  {
+    printf '# Perfil Active Directory\n\n'
+    printf 'Consultas sin credenciales: SRV de dominio, RootDSE, SMB/RPC anonimo y scripts SMB de categoria segura.\n'
+  } >"$PROFILE_DIR/summary.md"
+
+  if [[ $TARGET_TYPE == fqdn ]] && tool_ready dig; then
+    local record id
+    for record in _ldap._tcp.dc._msdcs _ldap._tcp _kerberos._tcp _kerberos._udp _gc._tcp; do
+      id=$(safe_slug "$record")
+      run_cmd "AD DNS SRV $record.$SCOPE_DOMAIN" "$PROFILE_DIR/ad-srv-$id.txt" "$LOG_DIR/ad-srv-$id.err" 30 \
+        dig +nocmd "$record.$SCOPE_DOMAIN" SRV +noall +answer || true
+    done
+  fi
+
+  if tool_ready nmap; then
+    local host host_id hosts="$PROFILE_DIR/ad-smb-hosts.txt"
+    awk -F'\t' '$2==445 && $3=="tcp" {print $1}' "$PORTS_DIR/open-ports.tsv" 2>/dev/null | LC_ALL=C sort -u | head -n "$MAX_HOSTS" >"$hosts"
+    ((DRY_RUN)) && printf '%s\n' "$TARGET" >"$hosts"
+    while IFS= read -r host; do
+      [[ -n $host ]] || continue; host_id=$(safe_slug "$host")
+      run_cmd "AD SMB seguro en $host" "$PROFILE_DIR/ad-smb-$host_id.txt" "$LOG_DIR/ad-smb-$host_id.err" 180 \
+        nmap -n -Pn "$NMAP_TIMING" -p 445 \
+        --script smb2-capabilities,smb2-security-mode,smb2-time,smb-os-discovery "$host" || true
+    done <"$hosts"
+  fi
+}
+
+module_profile_api() {
+  {
+    printf '# Perfil API\n\n'
+    printf 'Busca documentacion y descriptores conocidos mediante GET/HEAD, sin introspeccion GraphQL ni metodos de escritura.\n'
+  } >"$PROFILE_DIR/summary.md"
+  probe_profile_paths api "$SCRIPT_DIR/profiles/api-paths.txt"
+}
+
+module_profile_cloud() {
+  {
+    printf '# Perfil cloud\n\n'
+    printf 'Correlaciona DNS, CNAME, cabeceras y rutas publicas de identidad. No consulta metadata link-local ni usa credenciales cloud.\n'
+  } >"$PROFILE_DIR/summary.md"
+  probe_profile_paths cloud "$SCRIPT_DIR/profiles/cloud-paths.txt"
+
+  local indicators="$PROFILE_DIR/provider-indicators.txt" raw="$PROFILE_DIR/provider-indicators.raw.txt" file
+  : >"$indicators"
+  : >"$raw"
+  for file in "$TARGET_DIR/dns-cname.txt" "$DNS_DIR/dns-records.txt" "$HTTP_DIR/httpx.jsonl" "$HTTP_DIR/whatweb.txt"; do
+    [[ -s $file ]] && cat "$file" >>"$raw"
+  done
+  if [[ -s $raw ]]; then
+    grep -Eai 'amazonaws|cloudfront|azure|windows\.net|microsoftonline|googleapis|appspot|cloudfunctions|digitaloceanspaces|oraclecloud|cloudflare|fastly|akamai|heroku|vercel|netlify' \
+      "$raw" | LC_ALL=C sort -u >"$indicators" || true
+  fi
+  rm -f "$raw"
+}
+
+module_profile_ot() {
+  {
+    printf '# Perfil OT/ICS\n\n'
+    printf 'Politica conservadora: tasa baja, version ligera, sin NSE, SO, crawling, fuzzing, Nuclei ni consultas de protocolo.\n'
+  } >"$PROFILE_DIR/summary.md"
+  printf 'host\tport\tprotocol\tcandidate\n' >"$PROFILE_DIR/ot-service-candidates.tsv"
+  awk -F'\t' '
+    function candidate(port) {
+      if (port==102) return "Siemens S7/ISO-TSAP"
+      if (port==502) return "Modbus/TCP"
+      if (port==2404) return "IEC 60870-5-104"
+      if (port==4840) return "OPC UA"
+      if (port==9600) return "OMRON FINS"
+      if (port==20000) return "DNP3"
+      if (port==44818) return "EtherNet/IP"
+      if (port==47808) return "BACnet/IP"
+      return "servicio OT/IT por validar"
+    }
+    NF>=3 {print $1 "\t" $2 "\t" $3 "\t" candidate($2)}
+  ' "$PORTS_DIR/open-ports.tsv" 2>/dev/null >>"$PROFILE_DIR/ot-service-candidates.tsv" || true
+}
+
+module_profile() {
+  case "$PROFILE" in
+    ad) module_profile_ad ;;
+    api) module_profile_api ;;
+    cloud) module_profile_cloud ;;
+    ot) module_profile_ot ;;
+    *)
+      printf '# Perfil general\n\nNo se selecciono un perfil tecnologico especializado.\n' >"$PROFILE_DIR/summary.md"
+      ;;
+  esac
   return 0
 }
 
@@ -1316,13 +1600,18 @@ filter_scope_urls() {
 }
 
 module_crawl() {
+  if ((ENABLE_CRAWL == 0)); then
+    info "Crawling desactivado por el perfil $PROFILE"
+    : >"$CRAWL_DIR/endpoints.txt"
+    return 0
+  fi
   [[ -s $LIVE_URLS ]] || { info "Sin URLs vivas para crawling"; : >"$CRAWL_DIR/endpoints.txt"; return 0; }
   if tool_ready katana; then
     run_cmd "Crawling HTTP/JS con Katana" "$CRAWL_DIR/katana.txt" "$LOG_DIR/katana.err" "$STEP_TIMEOUT" \
       katana -silent -list "$LIVE_URLS" -depth "$CRAWL_DEPTH" -js-crawl -known-files all \
       -field-scope fqdn -disable-update-check -concurrency "$THREADS" -rate-limit "$RATE" -timeout 10 || true
   fi
-  if [[ $PROFILE == deep ]] && tool_ready hakrawler; then
+  if [[ $PROFILE == deep || $PROFILE == api ]] && tool_ready hakrawler; then
     local -a hak_scope=()
     [[ $TARGET_TYPE == fqdn ]] && hak_scope=(-subs)
     run_cmd "Crawling complementario con Hakrawler" "$CRAWL_DIR/hakrawler.txt" "$LOG_DIR/hakrawler.err" "$STEP_TIMEOUT" \
@@ -1449,7 +1738,7 @@ module_fuzz() {
     done <"$origins"
   fi
 
-  if [[ $PROFILE == deep && -n $WL_PARAMS ]] && tool_ready arjun; then
+  if [[ ($PROFILE == deep || $PROFILE == api) && -n $WL_PARAMS ]] && tool_ready arjun; then
     local arjun_targets="$FUZZ_DIR/arjun-targets.txt" arjun_threads=$THREADS
     ((arjun_threads > 10)) && arjun_threads=10
     if [[ -s $CRAWL_DIR/endpoints.txt ]]; then
@@ -1480,6 +1769,10 @@ tls_server_name() {
 }
 
 module_tls() {
+  if ((ENABLE_TLS_PROBES == 0)); then
+    info "Sondeo TLS activo desactivado por el perfil $PROFILE"
+    return 0
+  fi
   [[ -s $LIVE_URLS ]] || return 0
   local url authority server_name id tester=""
   if tool_ready testssl.sh; then tester="testssl.sh"; elif tool_ready testssl; then tester="testssl"; fi
@@ -1507,10 +1800,13 @@ module_tls() {
 module_observations() {
   if ((ENABLE_SAFE_NUCLEI == 0)) || [[ ! -s $LIVE_URLS ]]; then return 0; fi
   if tool_ready nuclei; then
+    local -a template_args=()
+    [[ -n ${REKON_NUCLEI_TEMPLATES:-} && -d ${REKON_NUCLEI_TEMPLATES:-} ]] && template_args=(-templates "$REKON_NUCLEI_TEMPLATES")
     run_cmd "Observaciones Nuclei no intrusivas" "$OBS_DIR/nuclei.stdout" "$LOG_DIR/nuclei.err" "$STEP_TIMEOUT" \
       nuclei -silent -l "$LIVE_URLS" -type http -tags tech,exposure,misconfig \
       -exclude-tags dos,fuzzing,bruteforce,intrusive,exploit,code,headless,oast \
-      -no-interactsh -rate-limit "$RATE" -concurrency "$THREADS" -timeout 10 -retries 1 \
+      -no-interactsh -disable-update-check "${template_args[@]}" \
+      -rate-limit "$RATE" -concurrency "$THREADS" -timeout 10 -retries 1 \
       -jsonl -output "$OBS_DIR/nuclei.jsonl" || true
     if ((DRY_RUN == 0)) && [[ -s $OBS_DIR/nuclei.jsonl ]]; then
       jq -r '[.info.severity, .info.name, (."matched-at" // .host // "")] | @tsv' "$OBS_DIR/nuclei.jsonl" 2>/dev/null >"$OBS_DIR/nuclei.tsv" || true
@@ -1520,6 +1816,10 @@ module_observations() {
 }
 
 module_screenshots() {
+  if ((ENABLE_SCREENSHOTS == 0)); then
+    info "Capturas desactivadas por el perfil $PROFILE"
+    return 0
+  fi
   [[ -s $LIVE_URLS ]] || return 0
   if tool_ready gowitness; then
     mkdir -p "$HTTP_DIR/screenshots"
@@ -1555,6 +1855,7 @@ module_report() {
     printf -- '- Objetivo: `%s`\n' "$TARGET"
     printf -- '- Tipo: `%s`\n' "$TARGET_TYPE"
     printf -- '- Perfil: `%s`\n' "$PROFILE"
+    printf -- '- Politica del perfil: %s\n' "$PROFILE_DESCRIPTION"
     printf -- '- Version REKON: `%s`\n' "$REKON_VERSION"
     printf -- '- Generado (UTC): `%s`\n' "$(now_iso)"
     printf -- '- Limites: `%s` hilos, `%s` req/s, `%s` hosts\n' "$THREADS" "$RATE" "$MAX_HOSTS"
@@ -1583,6 +1884,8 @@ module_report() {
     printf '\n\n## Trazabilidad\n\n'
     printf -- '- Comandos: `logs/commands.tsv`\n'
     printf -- '- Estado de modulos: `00-meta/modules.tsv`\n'
+    printf -- '- Politica de perfil: `00-meta/profile-policy.tsv`\n'
+    printf -- '- Resultados especializados: `11-profile/`\n'
     printf -- '- Diccionarios elegidos: `00-meta/selected-wordlists.tsv`\n'
     printf -- '- Integridad: `SHA256SUMS`\n\n'
     printf '## Interpretacion\n\n'
@@ -1591,12 +1894,12 @@ module_report() {
 
   if command -v jq >/dev/null 2>&1; then
     jq -n \
-      --arg target "$TARGET" --arg target_type "$TARGET_TYPE" --arg profile "$PROFILE" \
+      --arg target "$TARGET" --arg target_type "$TARGET_TYPE" --arg profile "$PROFILE" --arg profile_description "$PROFILE_DESCRIPTION" \
       --arg version "$REKON_VERSION" --arg generated_at "$(now_iso)" \
       --arg tcp_ports "$TCP_PORT_SPEC" --arg udp_ports "$UDP_PORT_SPEC" --argjson privileged_scans "$PRIVILEGED_SCANS" \
       --argjson hosts "$hosts" --argjson ports "$ports" --argjson urls "$urls" \
       --argjson endpoints "$endpoints" --argjson fuzz "$fuzz" --argjson fuzz_artifacts "$fuzz_artifacts" --argjson observations "$observations" \
-      '{target:$target,target_type:$target_type,profile:$profile,rekon_version:$version,generated_at:$generated_at,scan:{tcp_ports:$tcp_ports,udp_ports:$udp_ports,privileged:$privileged_scans},counts:{hosts:$hosts,open_ports:$ports,live_urls:$urls,endpoints:$endpoints,ffuf_results:$fuzz,fuzz_artifacts:$fuzz_artifacts,observations:$observations}}' \
+      '{target:$target,target_type:$target_type,profile:$profile,profile_description:$profile_description,rekon_version:$version,generated_at:$generated_at,scan:{tcp_ports:$tcp_ports,udp_ports:$udp_ports,privileged:$privileged_scans},counts:{hosts:$hosts,open_ports:$ports,live_urls:$urls,endpoints:$endpoints,ffuf_results:$fuzz,fuzz_artifacts:$fuzz_artifacts,observations:$observations}}' \
       >"$REPORT_DIR/summary.json"
   fi
   if tool_ready pandoc && ((DRY_RUN == 0)); then
@@ -1613,6 +1916,7 @@ self_test() {
   local -a bad=("10.0.0.0/24" "example.com;id" "https://example.com" "*.example.com" "a.example.com,b.example.com" "999.1.1.1")
   local -a good_ports=("none" "all" "top50" "top1000" "22,80,443" "8000-8100")
   local -a bad_ports=("0" "65536" "100-20" "80,,443" "22;id" "top500")
+  local -a profiles=("passive" "balanced" "deep" "ad" "api" "cloud" "ot")
   local value failures=0
   for value in "${good[@]}"; do
     TARGET_TYPE=""; TARGET=""
@@ -1628,6 +1932,15 @@ self_test() {
   for value in "${bad_ports[@]}"; do
     if valid_port_spec "$value"; then printf 'FAIL invalid port spec: %s\n' "$value"; ((failures+=1)); fi
   done
+  for value in "${profiles[@]}"; do
+    valid_profile "$value" || { printf 'FAIL valid profile: %s\n' "$value"; ((failures+=1)); }
+  done
+  if valid_profile "unknown"; then printf 'FAIL invalid profile: unknown\n'; ((failures+=1)); fi
+  (
+    PROFILE=ot
+    configure_profile
+    [[ $RATE -eq 5 && $THREADS -eq 4 && $ENABLE_FUZZ -eq 0 && $ENABLE_NMAP_SAFE_SCRIPTS -eq 0 ]]
+  ) || { printf 'FAIL OT safety policy\n'; ((failures+=1)); }
   if ((failures)); then printf 'Self-test: %s fallo(s)\n' "$failures"; return 1; fi
   printf 'Self-test: OK\n'
 }
@@ -1648,6 +1961,7 @@ main() {
   configure_profile
   confirm_authorization
   init_run
+  write_profile_policy
   trap on_interrupt INT TERM
 
   printf '%s\n' "$(uname -a)" >"$META_DIR/system.txt"
@@ -1661,6 +1975,7 @@ main() {
   select_wordlists
 
   info "$REKON_NAME $REKON_VERSION | objetivo=$TARGET | perfil=$PROFILE | salida=$RUN_DIR"
+  info "Politica: $PROFILE_DESCRIPTION"
   ((DRY_RUN)) && warn "Modo dry-run: no se emitira trafico de red"
 
   run_module target module_target
@@ -1669,6 +1984,7 @@ main() {
   run_module ports module_ports
   run_module services module_services
   run_module http module_http
+  run_module profile module_profile
   run_module crawl module_crawl
   run_module fuzz module_fuzz
   run_module tls module_tls

@@ -43,6 +43,7 @@ grep -Eq $'^resolvers\t[^-]' "$BALANCED_RUN/00-meta/selected-wordlists.tsv"
 grep -Fq 'ffuf ' "$BALANCED_RUN/logs/commands.tsv"
 grep -Fq 'nuclei ' "$BALANCED_RUN/logs/commands.tsv"
 grep -Fq -- '-exclude-tags' "$BALANCED_RUN/logs/commands.tsv"
+grep -Fq -- '-disable-update-check' "$BALANCED_RUN/logs/commands.tsv"
 grep -Fq $'report\tOK' "$BALANCED_RUN/00-meta/modules.tsv"
 if grep -Fq 'apt-get install' "$BALANCED_RUN/logs/commands.tsv"; then
   printf 'FAIL: --no-install planifico APT\n' >&2
@@ -92,6 +93,103 @@ grep -Fq 'Recursion web profunda con Feroxbuster' "$DEEP_RUN/logs/commands.tsv"
 grep -Fq 'Contraste de virtual hosts con Gobuster' "$DEEP_RUN/logs/commands.tsv"
 grep -Fq 'Descubrimiento de parametros GET con Arjun' "$DEEP_RUN/logs/commands.tsv"
 grep -Fq ' < ' "$DEEP_RUN/logs/commands.tsv"
+
+# Active Directory: SRV, RootDSE/SMB anonimo y NSE SMB explicito.
+bash "$PROJECT_ROOT/rekon.sh" \
+  --target dc.lab.example \
+  --wordlists "$PROJECT_ROOT/tests/fixtures/wordlists" \
+  --profile ad \
+  --output "$TEST_ROOT/ad" \
+  --only profile,report \
+  --dry-run \
+  --no-install \
+  --no-sudo-scans \
+  --non-interactive \
+  --accept-authorized-use \
+  --no-color >/dev/null
+
+AD_RUN=$(first_run_dir "$TEST_ROOT/ad")
+grep -Fq $'profile\tad' "$AD_RUN/00-meta/profile-policy.tsv"
+grep -Fq '_ldap._tcp.dc._msdcs.dc.lab.example' "$AD_RUN/logs/commands.tsv"
+grep -Fq 'smb2-capabilities' "$AD_RUN/logs/commands.tsv"
+grep -Fq 'smb-os-discovery' "$AD_RUN/logs/commands.tsv"
+[[ -s $AD_RUN/11-profile/summary.md ]]
+
+# API: rutas integradas, limites propios y descubrimiento solo GET/HEAD.
+bash "$PROJECT_ROOT/rekon.sh" \
+  --target api.lab.example \
+  --wordlists "$PROJECT_ROOT/tests/fixtures/wordlists" \
+  --profile api \
+  --output "$TEST_ROOT/api" \
+  --only http,profile,report \
+  --dry-run \
+  --no-install \
+  --no-sudo-scans \
+  --non-interactive \
+  --accept-authorized-use \
+  --no-color >/dev/null
+
+API_RUN=$(first_run_dir "$TEST_ROOT/api")
+grep -Fq $'profile\tapi' "$API_RUN/00-meta/profile-policy.tsv"
+grep -Fq 'profiles/api-paths.txt:FUZZ' "$API_RUN/logs/commands.tsv"
+grep -Fq $'rate\t40' "$API_RUN/00-meta/profile-policy.tsv"
+[[ -s $API_RUN/11-profile/summary.md ]]
+
+# Cloud: rutas publicas de identidad y sin endpoints de metadata link-local.
+bash "$PROJECT_ROOT/rekon.sh" \
+  --target app.lab.example \
+  --wordlists "$PROJECT_ROOT/tests/fixtures/wordlists" \
+  --profile cloud \
+  --output "$TEST_ROOT/cloud" \
+  --only http,profile,report \
+  --dry-run \
+  --no-install \
+  --no-sudo-scans \
+  --non-interactive \
+  --accept-authorized-use \
+  --no-color >/dev/null
+
+CLOUD_RUN=$(first_run_dir "$TEST_ROOT/cloud")
+grep -Fq $'profile\tcloud' "$CLOUD_RUN/00-meta/profile-policy.tsv"
+grep -Fq 'profiles/cloud-paths.txt:FUZZ' "$CLOUD_RUN/logs/commands.tsv"
+if grep -REq '169\.254\.169\.254|metadata\.google\.internal' "$CLOUD_RUN"; then
+  printf 'FAIL: cloud consulto metadata link-local\n' >&2
+  exit 1
+fi
+
+# OT: solo puertos/version ligera, sin herramientas ni consultas de protocolo.
+bash "$PROJECT_ROOT/rekon.sh" \
+  --target 192.0.2.40 \
+  --wordlists "$PROJECT_ROOT/tests/fixtures/wordlists" \
+  --profile ot \
+  --output "$TEST_ROOT/ot" \
+  --dry-run \
+  --no-install \
+  --sudo-scans \
+  --non-interactive \
+  --accept-authorized-use \
+  --no-color >/dev/null
+
+OT_RUN=$(first_run_dir "$TEST_ROOT/ot")
+grep -Fq $'profile\tot' "$OT_RUN/00-meta/profile-policy.tsv"
+grep -Fq $'threads\t4' "$OT_RUN/00-meta/profile-policy.tsv"
+grep -Fq $'rate\t5' "$OT_RUN/00-meta/profile-policy.tsv"
+grep -Fq $'http_probes\t0' "$OT_RUN/00-meta/profile-policy.tsv"
+grep -Fq -- '-T2' "$OT_RUN/logs/commands.tsv"
+grep -Fq -- '--version-light' "$OT_RUN/logs/commands.tsv"
+[[ -s $OT_RUN/11-profile/ot-service-candidates.tsv ]]
+if grep -Eq 'naabu |masscan |ffuf |nuclei |httpx |gowitness |ping |traceroute |dig AXFR|--script[=[:space:]]' "$OT_RUN/logs/commands.tsv"; then
+  printf 'FAIL: OT planifico una herramienta activa deshabilitada\n' >&2
+  exit 1
+fi
+
+if bash "$PROJECT_ROOT/rekon.sh" \
+  -t 192.0.2.40 -w "$PROJECT_ROOT/tests/fixtures/wordlists" -p ot \
+  --tcp-ports all --dry-run --no-install --no-sudo-scans \
+  --accept-authorized-use --non-interactive >/dev/null 2>&1; then
+  printf 'FAIL: OT acepto un escaneo TCP all\n' >&2
+  exit 1
+fi
 
 # Sin autorización raw se usa TCP connect y no se planifica UDP, incluso como root.
 bash "$PROJECT_ROOT/rekon.sh" \

@@ -1,10 +1,13 @@
 # REKON
 
-REKON 1.1 es un orquestador Bash de reconocimiento y enumeración para
+REKON 1.2 es un orquestador Bash de reconocimiento y enumeración para
 laboratorios y pentests expresamente autorizados. Recibe una única IPv4, IPv6,
 hostname o FQDN, instala de forma consentida las dependencias que falten,
 selecciona automáticamente los diccionarios adecuados y genera un expediente
 reproducible con evidencias, comandos, tiempos, errores, informes y hashes.
+
+Esta versión incorpora un contenedor reproducible y políticas separadas para
+Active Directory, API, cloud y OT/ICS, además de los perfiles generales.
 
 No es un framework de explotación. Deliberadamente no incorpora fuerza bruta de
 credenciales, spraying, payloads, explotación, persistencia, DoS, OAST ni métodos
@@ -22,14 +25,16 @@ HTTP con escritura.
    privilegios raw.
 6. Enumeración segura de RPC, NFS, claves SSH, SMB anónimo y RootDSE LDAP anónimo.
 7. Descubrimiento HTTP multipuerto, cabeceras, tecnologías, WAF y capturas.
-8. Crawling con Katana; Hakrawler complementario en `deep`; URLs históricas con
+8. Crawling con Katana; Hakrawler complementario en `deep` y `api`; URLs históricas con
    gau y waybackurls.
 9. FFUF para directorios, ficheros, parámetros GET y vhosts. En `deep`,
    Feroxbuster añade recursión acotada, Gobuster contrasta vhosts y Arjun valida
    parámetros GET con pocas solicitudes agrupadas.
 10. TLS con testssl.sh, sslscan u OpenSSL y observaciones Nuclei limitadas a
     `tech`, `exposure` y `misconfig` sin Interactsh.
-11. Informe Markdown/JSON, HTML opcional, inventario antes/después de instalar,
+11. Perfiles especializados `ad`, `api`, `cloud` y `ot`, con artefactos y
+    controles de seguridad propios.
+12. Informe Markdown/JSON, HTML opcional, inventario antes/después de instalar,
     política de escaneo, comandos reproducibles y `SHA256SUMS`.
 
 ## Inicio rápido
@@ -38,6 +43,18 @@ HTTP con escritura.
 chmod +x rekon.sh
 ./rekon.sh
 ```
+
+O bien, sin instalar herramientas en el host:
+
+```bash
+./container/build.sh
+docker compose run --rm rekon \
+  -t app.lab.example -p api \
+  --sudo-scans --accept-authorized-use --non-interactive
+```
+
+Consulta la [guía del contenedor](docs/CONTAINER.md) para montar diccionarios,
+salida, capacidades y red del laboratorio.
 
 El asistente solicita:
 
@@ -81,6 +98,10 @@ emitir tráfico:
 REKON instala primero y después enumera. La fase es idempotente: conserva las
 herramientas ya presentes e intenta completar únicamente la pila ausente.
 
+En entornos sin `apt`, `dnf` o `pacman`, la imagen construida desde el repositorio fija
+la base por digest, APT por snapshot, Go por versión y SHA-256, y cada herramienta
+por versión o commit. Dentro del contenedor `--install-deps` no muta la imagen.
+
 - Kali, Debian, Parrot y Ubuntu: pila amplia mediante `apt-get`.
 - Fedora/RHEL: dependencias base mediante `dnf`.
 - Arch: dependencias base mediante `pacman`.
@@ -113,13 +134,21 @@ La disponibilidad y versiones dependen de la distribución. Gobuster actual
 requiere una versión reciente de Go; si la del repositorio es antigua, el fallo
 queda registrado y FFUF/Feroxbuster siguen disponibles cuando se instalaron.
 
-## Perfiles TCP y UDP
+## Perfiles
 
 | Perfil | TCP | UDP | Web/DNS | Límites iniciales |
 |---|---|---|---|---|
 | `passive` | No | No | OSINT y consultas básicas | 8 hilos, 10/s, 50 hosts |
 | `balanced` | top 1000 | top 50 con privilegios | listas medianas, FFUF | 20 hilos, 50/s, 100 hosts |
 | `deep` | 1–65535 | top 200 con privilegios | listas grandes y motores complementarios | 35 hilos, 100/s, 300 hosts |
+| `ad` | DNS, Kerberos, LDAP, SMB, GC, RDP y WinRM | puertos AD con privilegios | SRV, RootDSE y SMB/RPC anónimo | 16 hilos, 25/s, 150 hosts |
+| `api` | puertos web/API | No | OpenAPI, Swagger, crawling y parámetros GET | 20 hilos, 40/s, 100 hosts |
+| `cloud` | puertos web | No | DNS/CNAME, OIDC/JWKS y huellas públicas | 12 hilos, 20/s, 200 hosts |
+| `ot` | lista OT/IT explícita | lista OT explícita con privilegios | sin HTTP, TLS, NSE ni fuzzing | 4 hilos, 5/s, 25 hosts |
+
+Los detalles y garantías de cada política están en
+[`docs/PROFILES.md`](docs/PROFILES.md). La política efectiva de cada ejecución se
+conserva en `00-meta/profile-policy.tsv`.
 
 Puedes sustituir ambos conjuntos:
 
@@ -146,6 +175,11 @@ Los topes duros son 200 hilos, 10.000 operaciones/s y 5.000 hosts. Ajustes:
 --threads 15 --rate 30 --max-hosts 20
 ```
 
+OT aplica límites adicionales de 10 hilos, 20/s y 100 hosts, rechaza conjuntos
+`top*`/`all` y exige puertos explícitos. El perfil omite Naabu, Masscan, NSE, SO,
+ICMP/traceroute, AXFR, consultas de protocolo, HTTP/TLS, crawling, fuzzing,
+Nuclei y capturas.
+
 ## Herramienta elegida por tarea
 
 | Tarea | Principal | Complemento o fallback |
@@ -158,14 +192,15 @@ Los topes duros son 200 hilos, 10.000 operaciones/s y 5.000 hosts. Ajustes:
 | Crawling | Katana | Hakrawler, gau, waybackurls |
 | Directorios/ficheros | FFUF | Feroxbuster profundo, Gobuster fallback |
 | Vhosts | FFUF | Gobuster en `deep` |
-| Parámetros | FFUF | Arjun GET en `deep` |
+| Parámetros | FFUF | Arjun GET en `deep` y `api` |
 | TLS | testssl.sh | sslscan, OpenSSL |
 | Observaciones | Nuclei no intrusivo | — |
 | Capturas | Gowitness | — |
 
 La combinación se elige por función. No se ejecutan dos escáneres completos de
 puertos sin motivo: Naabu/Masscan descubren y Nmap valida; los motores web
-adicionales se reservan al perfil `deep` o funcionan como fallback.
+adicionales se reservan a `deep`, al perfil tecnológico aplicable o funcionan
+como fallback.
 
 ## Selección automática de diccionarios
 
@@ -202,7 +237,7 @@ alcance. La decisión queda en `00-meta/selected-wordlists.tsv`.
   --accept-authorized-use --non-interactive
 ```
 
-Módulos: `target`, `passive`, `dns`, `ports`, `services`, `http`, `crawl`,
+Módulos: `target`, `passive`, `dns`, `ports`, `services`, `http`, `profile`, `crawl`,
 `fuzz`, `tls`, `observations`, `screenshots`, `report`. La reanudación reutiliza
 marcadores `.done` y rechaza mezclar un directorio con otro objetivo.
 
@@ -229,6 +264,7 @@ objetivo_TIMESTAMP/
 ├── 08-fuzzing/           FFUF, Feroxbuster, Gobuster y Arjun
 ├── 09-tls/               certificados y configuración TLS
 ├── 10-observations/      Nuclei no intrusivo
+├── 11-profile/           artefactos específicos de AD, API, cloud u OT
 ├── logs/                 comandos, stdout/stderr, estados y tiempos
 ├── report/               REKON-report.md, summary.json y HTML opcional
 └── SHA256SUMS            integridad de las evidencias
@@ -240,12 +276,15 @@ objetivo_TIMESTAMP/
 bash -n rekon.sh
 bash rekon.sh --self-test
 bash tests/smoke.sh
-shellcheck -x rekon.sh tests/smoke.sh
+bash tests/container-static.sh
+shellcheck -x rekon.sh container/*.sh tests/*.sh
 ```
 
 Las pruebas de humo usan dominios reservados y `--dry-run`: no instalan paquetes
-ni generan tráfico. Verifican instalación planificada, perfiles TCP/UDP, motores
-web profundos, rutas con espacios, informes y exclusiones Nuclei.
+ni generan tráfico. Verifican instalación planificada, todos los perfiles,
+motores web profundos, rutas con espacios, límites OT, informes, exclusiones
+Nuclei y fijación del contenedor. CI también construye la imagen y ejecuta dentro
+de ella la versión y el self-test.
 
 ## Decisiones de seguridad
 
@@ -259,6 +298,8 @@ web profundos, rutas con espacios, informes y exclusiones Nuclei.
   `headless` y `oast`, y desactiva Interactsh.
 - SMB y LDAP solo intentan consultas anónimas; no se adivinan credenciales ni
   comunidades SNMP.
+- AD usa un conjunto SMB explícito; API no usa métodos de escritura; cloud no
+  consulta metadata link-local; OT se limita a puerto y versión ligera.
 - Los resultados son observaciones, no vulnerabilidades confirmadas; requieren
   validación manual.
 
@@ -281,11 +322,10 @@ solo cuando la ventana y el alcance lo permitan.
 
 ## Mejoras futuras
 
-- lockfile opcional con versiones y hashes fijados;
-- contenedor reproducible para entornos sin gestor compatible;
 - diff entre ejecuciones y exportación SARIF/HTML enriquecido;
-- perfiles separados para Active Directory, API, cloud y OT;
 - fuentes pasivas con API keys gestionadas por el usuario.
+
+Consulta [`CHANGELOG.md`](CHANGELOG.md) para el historial de versiones.
 
 ## Licencia y responsabilidad
 

@@ -1,0 +1,7 @@
+.git
+.github
+rekon-output
+REKON-v*.zip
+*.swp
+*.swo
+.DS_Store

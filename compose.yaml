@@ -1,0 +1,17 @@
+services:
+  rekon:
+    build:
+      context: .
+      args:
+        REKON_VERSION: "1.2.0"
+    image: "${REKON_IMAGE:-rekon:1.2.0}"
+    user: "${REKON_UID:-10001}:${REKON_GID:-10001}"
+    network_mode: "${REKON_NETWORK_MODE:-bridge}"
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    stdin_open: true
+    tty: true
+    volumes:
+      - "${REKON_WORDLISTS:-/usr/share/seclists}:/wordlists:ro"
+      - "${REKON_OUTPUT:-./rekon-output}:/output"

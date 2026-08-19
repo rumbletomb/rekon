@@ -1,0 +1,11 @@
+.well-known/openid-configuration
+.well-known/jwks.json
+.well-known/security.txt
+security.txt
+robots.txt
+sitemap.xml
+manifest.json
+asset-manifest.json
+version
+health
+healthz

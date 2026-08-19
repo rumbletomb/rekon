@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -21,11 +25,32 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Bash syntax
-        run: bash -n rekon.sh tests/smoke.sh
+        run: bash -n rekon.sh container/*.sh tests/*.sh
 
       - name: ShellCheck
-        run: shellcheck -x rekon.sh tests/smoke.sh
+        run: shellcheck -x rekon.sh container/*.sh tests/*.sh
 
       - name: Offline tests
-        run: bash tests/smoke.sh
+        run: |
+          bash tests/container-static.sh
+          bash tests/smoke.sh
 
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Dockerfile validation
+        run: docker build --check .
+
+      - name: Build pinned image
+        run: docker build --pull --tag rekon-ci:1.2.0 .
+
+      - name: Container smoke tests
+        run: |
+          docker run --rm rekon-ci:1.2.0 --version | grep -Fx 'REKON 1.2.0'
+          docker run --rm rekon-ci:1.2.0 --self-test | grep -Fx 'Self-test: OK'
+          docker run --rm --cap-add NET_RAW --cap-add NET_ADMIN rekon-ci:1.2.0 \
+            shell -lc 'getcap /usr/bin/nmap | grep -q cap_net_raw && nmap -sn -n 127.0.0.1 >/dev/null'
