@@ -51,6 +51,13 @@ grep -Fq "image: \"\${REKON_IMAGE:-rekon:$REKON_VERSION}\"" "$PROJECT_ROOT/compo
 [[ -s $PROJECT_ROOT/profiles/api-paths.txt ]] || fail "falta lista API"
 [[ -s $PROJECT_ROOT/profiles/cloud-paths.txt ]] || fail "falta lista cloud"
 
+grep -Fq 'GH_TOKEN: ${{ github.token }}' "$PROJECT_ROOT/.github/workflows/ci.yml" || \
+  fail "el token automatico debe conservar la escritura de estados"
+grep -Fq 'RELEASE_TOKEN: ${{ secrets.REKON_RELEASE_TOKEN }}' "$PROJECT_ROOT/.github/workflows/ci.yml" || \
+  fail "falta el token dedicado de releases"
+grep -Fq 'GH_TOKEN=$RELEASE_TOKEN gh "$@"' "$PROJECT_ROOT/.github/scripts/bootstrap-releases.sh" || \
+  fail "las operaciones de release no usan el token dedicado"
+
 if command -v docker >/dev/null 2>&1; then
   docker build --check "$PROJECT_ROOT"
 fi
