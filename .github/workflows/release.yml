@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag semántico, por ejemplo v1.3.0
+        required: true
+        type: string
+      target:
+        description: Rama o commit que se publicará
+        required: true
+        default: main
+        type: string
+      title:
+        description: Título del release
+        required: true
+        type: string
+      prerelease:
+        description: Publicar como prerelease
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Publish v1.1.0 and v1.2.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --force --tags
+
+          notes_110="$RUNNER_TEMP/v1.1.0.md"
+          notes_120="$RUNNER_TEMP/v1.2.0.md"
+
+          cat >"$notes_110" <<'EOF_110'
+          REKON 1.1.0 establece el orquestador base de reconocimiento y enumeración para laboratorios autorizados.
+
+          Incluye instalación consentida, selección automática de diccionarios, reconocimiento TCP/UDP, enumeración web, DNS y de servicios, trazabilidad, reanudación e informes.
+
+          No incluye explotación, fuerza bruta de credenciales, denegación de servicio ni acciones destructivas.
+          EOF_110
+
+          cat >"$notes_120" <<'EOF_120'
+          REKON 1.2.0 añade un contenedor reproducible y perfiles especializados para Active Directory, API, cloud y OT/ICS.
+
+          Novedades principales:
+
+          - imagen multi-stage con base fijada por digest, Debian Snapshot, Go verificado y herramientas versionadas;
+          - ejecución Docker/Podman y Compose como usuario no privilegiado;
+          - perfiles ad, api, cloud y ot con políticas y evidencias separadas;
+          - límites especialmente conservadores para entornos OT;
+          - pruebas ShellCheck, smoke tests offline, construcción integral de la imagen, inventario runtime, dry-runs de todos los perfiles y comprobación raw de Nmap.
+
+          La validación reduce riesgos conocidos, pero no constituye una garantía absoluta para todas las redes, arquitecturas, servicios o versiones externas. Consulta docs/VERIFICATION.md.
+          EOF_120
+
+          ensure_release() {
+            local tag=$1 target=$2 title=$3 notes=$4 mark_latest=$5 actual
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              actual=$(git rev-list -n 1 "$tag")
+              if [[ $actual != "$target" ]]; then
+                printf 'El tag %s apunta a %s, no a %s\n' "$tag" "$actual" "$target" >&2
+                return 1
+              fi
+            else
+              git tag -a "$tag" "$target" -m "$title"
+              git push origin "refs/tags/$tag"
+            fi
+
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              printf 'El release %s ya existe; no se modifica.\n' "$tag"
+              return 0
+            fi
+
+            local -a args=(
+              release create "$tag"
+              --repo "$GITHUB_REPOSITORY"
+              --verify-tag
+              --title "$title"
+              --notes-file "$notes"
+            )
+            if [[ $mark_latest == true ]]; then
+              args+=(--latest)
+            fi
+            gh "${args[@]}"
+          }
+
+          ensure_release v1.1.0 aacf15d797c91434f5ef7ea1c32a21469a73a870 \
+            'REKON 1.1.0' "$notes_110" false
+          ensure_release v1.2.0 "$GITHUB_SHA" 'REKON 1.2.0' "$notes_120" true
+
+  manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Publish selected release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ inputs.target }}
+          TITLE: ${{ inputs.title }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -Eeuo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            printf 'El release %s ya existe; no se modifica.\n' "$TAG"
+            exit 0
+          fi
+
+          args=(
+            release create "$TAG"
+            --repo "$GITHUB_REPOSITORY"
+            --target "$TARGET"
+            --title "$TITLE"
+            --generate-notes
+          )
+          if [[ $PRERELEASE == true ]]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh "${args[@]}"

@@ -283,8 +283,12 @@ shellcheck -x rekon.sh container/*.sh tests/*.sh
 Las pruebas de humo usan dominios reservados y `--dry-run`: no instalan paquetes
 ni generan tráfico. Verifican instalación planificada, todos los perfiles,
 motores web profundos, rutas con espacios, límites OT, informes, exclusiones
-Nuclei y fijación del contenedor. CI también construye la imagen y ejecuta dentro
-de ella la versión y el self-test.
+Nuclei y fijación del contenedor. CI también construye la imagen, comprueba las
+dependencias runtime, ejecuta todos los perfiles en dry-run dentro del
+contenedor y valida las capacidades raw de Nmap sobre loopback.
+
+Consulta [la matriz de verificación y sus límites](docs/VERIFICATION.md) para
+distinguir qué propiedades están comprobadas y cuáles dependen del entorno.
 
 ## Decisiones de seguridad
 

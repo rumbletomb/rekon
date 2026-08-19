@@ -52,5 +52,36 @@ jobs:
         run: |
           docker run --rm rekon-ci:1.2.0 --version | grep -Fx 'REKON 1.2.0'
           docker run --rm rekon-ci:1.2.0 --self-test | grep -Fx 'Self-test: OK'
+          docker run --rm rekon-ci:1.2.0 shell -c '
+            set -eu
+            for tool in \
+              bash chromium curl dig dnsx ffuf gau gobuster gowitness hakrawler \
+              httpx jq katana ldapsearch massdns naabu nmap nuclei openssl pandoc \
+              puredns rpcinfo smbclient sslscan subfinder waybackurls whois
+            do
+              command -v "$tool" >/dev/null || {
+                printf "Falta la herramienta runtime: %s\n" "$tool" >&2
+                exit 1
+              }
+            done
+            test -d "$REKON_NUCLEI_TEMPLATES"
+            test -s /opt/rekon/profiles/api-paths.txt
+            test -s /opt/rekon/profiles/cloud-paths.txt
+          '
           docker run --rm --cap-add NET_RAW --cap-add NET_ADMIN rekon-ci:1.2.0 \
             shell -c 'test -x /usr/sbin/getcap && /usr/sbin/getcap /usr/bin/nmap | grep -q cap_net_raw && nmap -sn -n 127.0.0.1 >/dev/null'
+
+      - name: Container profile dry-runs
+        run: |
+          for profile in passive balanced deep ad api cloud ot; do
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE/tests/fixtures/wordlists:/wordlists:ro" \
+              rekon-ci:1.2.0 \
+              --target lab.example.invalid \
+              --profile "$profile" \
+              --dry-run \
+              --no-install \
+              --accept-authorized-use \
+              --non-interactive \
+              --only report
+          done
