@@ -54,9 +54,9 @@ jobs:
           docker run --rm rekon-ci:1.2.0 --self-test | grep -Fx 'Self-test: OK'
           docker run --rm rekon-ci:1.2.0 shell -c '
             set -eu
-            for tool in
-              bash chromium curl dig dnsx ffuf gau gobuster gowitness hakrawler
-              httpx jq katana ldapsearch massdns naabu nmap nuclei openssl pandoc
+            for tool in \
+              bash chromium curl dig dnsx ffuf gau gobuster gowitness hakrawler \
+              httpx jq katana ldapsearch massdns naabu nmap nuclei openssl pandoc \
               puredns rpcinfo smbclient sslscan subfinder waybackurls whois
             do
               command -v "$tool" >/dev/null || {
