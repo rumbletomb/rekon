@@ -15,6 +15,8 @@ versionado semántico.
 - Perfiles `ad`, `api`, `cloud` y `ot`, con evidencias propias en `11-profile/`.
 - Listas integradas conservadoras para rutas API y cloud.
 - Pruebas offline de los cuatro perfiles y validación estática del contenedor.
+- Workflow idempotente para publicar releases y tags semánticos.
+- Matriz explícita de verificación, cobertura y límites conocidos.
 
 ### Cambiado
 
@@ -28,6 +30,8 @@ versionado semántico.
 - Compatibilidad completa con ShellCheck en el orquestador y sus pruebas.
 - Verificación de capacidades de Nmap en el contenedor sin depender del `PATH`
   de una shell de login no privilegiada.
+- Smoke tests del inventario runtime y dry-runs de todos los perfiles dentro de
+  la imagen construida.
 
 ### Seguridad
 
