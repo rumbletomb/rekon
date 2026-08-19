@@ -53,4 +53,4 @@ jobs:
           docker run --rm rekon-ci:1.2.0 --version | grep -Fx 'REKON 1.2.0'
           docker run --rm rekon-ci:1.2.0 --self-test | grep -Fx 'Self-test: OK'
           docker run --rm --cap-add NET_RAW --cap-add NET_ADMIN rekon-ci:1.2.0 \
-            shell -lc 'getcap /usr/bin/nmap | grep -q cap_net_raw && nmap -sn -n 127.0.0.1 >/dev/null'
+            shell -c 'test -x /usr/sbin/getcap && /usr/sbin/getcap /usr/bin/nmap | grep -q cap_net_raw && nmap -sn -n 127.0.0.1 >/dev/null'
