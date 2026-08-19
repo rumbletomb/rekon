@@ -262,7 +262,8 @@ configure_colors() {
 }
 
 configure_profile() {
-  case "$PROFILE" in
+  local selected_profile=${1:-$PROFILE}
+  case "$selected_profile" in
     passive)
       THREADS=8 RATE=10 MAX_HOSTS=50 MAX_WEB_TARGETS=10 CRAWL_DEPTH=1
       FFUF_MAXTIME=0 STEP_TIMEOUT=600 DNS_WL_LIMIT=0 DIR_WL_LIMIT=0
@@ -351,7 +352,7 @@ configure_profile() {
       NMAP_TIMING="-T2" NMAP_VERSION_MODE="--version-light"
       PROFILE_DESCRIPTION="OT/ICS conservador: deteccion de puertos y version ligera sin scripts de protocolo"
       ;;
-    *) die "Perfil no valido: $PROFILE" ;;
+    *) die "Perfil no valido: $selected_profile" ;;
   esac
 
   [[ -n $THREADS_OVERRIDE ]] && THREADS=$THREADS_OVERRIDE
@@ -363,7 +364,7 @@ configure_profile() {
   ((THREADS <= 200)) || die "--threads no puede superar 200"
   ((RATE <= 10000)) || die "--rate no puede superar 10000"
   ((MAX_HOSTS <= 5000)) || die "--max-hosts no puede superar 5000"
-  if [[ $PROFILE == ot ]]; then
+  if [[ $selected_profile == ot ]]; then
     ((THREADS <= 10)) || die "El perfil OT limita --threads a 10"
     ((RATE <= 20)) || die "El perfil OT limita --rate a 20"
     ((MAX_HOSTS <= 100)) || die "El perfil OT limita --max-hosts a 100"
@@ -1838,7 +1839,9 @@ module_screenshots() {
 count_lines() { local f=$1; [[ -s $f ]] && wc -l <"$f" || printf '0'; }
 
 module_report() {
-  ((DRY_RUN == 0)) && summarize_ffuf || true
+  if ((DRY_RUN == 0)); then
+    summarize_ffuf || true
+  fi
   local hosts ports urls endpoints fuzz fuzz_artifacts observations
   hosts=$(count_lines "$SCAN_TARGETS")
   ports=$(count_lines "$PORTS_DIR/open-ports.tsv")
@@ -1852,14 +1855,14 @@ module_report() {
     printf '# Informe REKON\n\n'
     printf '> Reconocimiento y enumeracion de laboratorio. Los resultados son observaciones que requieren validacion manual.\n\n'
     printf '## Contexto\n\n'
-    printf -- '- Objetivo: `%s`\n' "$TARGET"
-    printf -- '- Tipo: `%s`\n' "$TARGET_TYPE"
-    printf -- '- Perfil: `%s`\n' "$PROFILE"
+    printf -- "- Objetivo: \`%s\`\n" "$TARGET"
+    printf -- "- Tipo: \`%s\`\n" "$TARGET_TYPE"
+    printf -- "- Perfil: \`%s\`\n" "$PROFILE"
     printf -- '- Politica del perfil: %s\n' "$PROFILE_DESCRIPTION"
-    printf -- '- Version REKON: `%s`\n' "$REKON_VERSION"
-    printf -- '- Generado (UTC): `%s`\n' "$(now_iso)"
-    printf -- '- Limites: `%s` hilos, `%s` req/s, `%s` hosts\n' "$THREADS" "$RATE" "$MAX_HOSTS"
-    printf -- '- Puertos: TCP `%s`, UDP `%s`, privilegiado `%s`\n\n' "$TCP_PORT_SPEC" "$UDP_PORT_SPEC" "$PRIVILEGED_SCANS"
+    printf -- "- Version REKON: \`%s\`\n" "$REKON_VERSION"
+    printf -- "- Generado (UTC): \`%s\`\n" "$(now_iso)"
+    printf -- "- Limites: \`%s\` hilos, \`%s\` req/s, \`%s\` hosts\n" "$THREADS" "$RATE" "$MAX_HOSTS"
+    printf -- "- Puertos: TCP \`%s\`, UDP \`%s\`, privilegiado \`%s\`\n\n" "$TCP_PORT_SPEC" "$UDP_PORT_SPEC" "$PRIVILEGED_SCANS"
     printf '## Resumen\n\n'
     printf '| Metrica | Total |\n|---|---:|\n'
     printf '| Hosts procesados | %s |\n' "$hosts"
@@ -1882,12 +1885,12 @@ module_report() {
       awk -F'\t' 'NR<=250 {gsub(/\|/,"\\|",$0); printf "| %s | %s | %s |\n",$1,$2,$3}' "$OBS_DIR/nuclei.tsv"
     else printf '_Sin observaciones o modulo no ejecutado._\n'; fi
     printf '\n\n## Trazabilidad\n\n'
-    printf -- '- Comandos: `logs/commands.tsv`\n'
-    printf -- '- Estado de modulos: `00-meta/modules.tsv`\n'
-    printf -- '- Politica de perfil: `00-meta/profile-policy.tsv`\n'
-    printf -- '- Resultados especializados: `11-profile/`\n'
-    printf -- '- Diccionarios elegidos: `00-meta/selected-wordlists.tsv`\n'
-    printf -- '- Integridad: `SHA256SUMS`\n\n'
+    printf -- "- Comandos: \`logs/commands.tsv\`\n"
+    printf -- "- Estado de modulos: \`00-meta/modules.tsv\`\n"
+    printf -- "- Politica de perfil: \`00-meta/profile-policy.tsv\`\n"
+    printf -- "- Resultados especializados: \`11-profile/\`\n"
+    printf -- "- Diccionarios elegidos: \`00-meta/selected-wordlists.tsv\`\n"
+    printf -- "- Integridad: \`SHA256SUMS\`\n\n"
     printf '## Interpretacion\n\n'
     printf 'Este informe no demuestra por si solo una vulnerabilidad. Valida manualmente falsos positivos, alcance, impacto y evidencia antes de emitir conclusiones.\n'
   } >"$REPORT_DIR/REKON-report.md"
@@ -1907,7 +1910,14 @@ module_report() {
       pandoc -s "$REPORT_DIR/REKON-report.md" -o "$REPORT_DIR/REKON-report.html" || true
   fi
 
-  (cd "$RUN_DIR" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >SHA256SUMS)
+  local checksum_tmp
+  checksum_tmp=$(mktemp "${TMPDIR:-/tmp}/rekon-sha256.XXXXXX")
+  if (cd "$RUN_DIR" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum >"$checksum_tmp"); then
+    mv -- "$checksum_tmp" "$RUN_DIR/SHA256SUMS"
+  else
+    rm -f -- "$checksum_tmp"
+    return 1
+  fi
   return 0
 }
 
@@ -1937,8 +1947,7 @@ self_test() {
   done
   if valid_profile "unknown"; then printf 'FAIL invalid profile: unknown\n'; ((failures+=1)); fi
   (
-    PROFILE=ot
-    configure_profile
+    configure_profile ot
     [[ $RATE -eq 5 && $THREADS -eq 4 && $ENABLE_FUZZ -eq 0 && $ENABLE_NMAP_SAFE_SCRIPTS -eq 0 ]]
   ) || { printf 'FAIL OT safety policy\n'; ((failures+=1)); }
   if ((failures)); then printf 'Self-test: %s fallo(s)\n' "$failures"; return 1; fi
