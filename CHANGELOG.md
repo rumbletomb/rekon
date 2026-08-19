@@ -23,6 +23,12 @@ versionado semántico.
 - La imagen desactiva instalaciones en tiempo de ejecución y actualizaciones de
   plantillas Nuclei.
 
+### Corregido
+
+- Compatibilidad completa con ShellCheck en el orquestador y sus pruebas.
+- Verificación de capacidades de Nmap en el contenedor sin depender del `PATH`
+  de una shell de login no privilegiada.
+
 ### Seguridad
 
 - OT omite Naabu, Masscan, NSE, detección de SO, ICMP/traceroute, AXFR, consultas de protocolo, HTTP/TLS,
