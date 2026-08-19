@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-for required in GH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RUNNER_TEMP; do
+for required in GH_TOKEN RELEASE_TOKEN GITHUB_REPOSITORY GITHUB_SHA RUNNER_TEMP; do
   if [[ -z ${!required:-} ]]; then
     printf 'Falta la variable requerida: %s\n' "$required" >&2
     exit 2
@@ -11,6 +11,10 @@ done
 
 readonly GITHUB_SERVER_URL=${GITHUB_SERVER_URL:-https://github.com}
 PHASE=initialization
+
+release_gh() {
+  GH_TOKEN=$RELEASE_TOKEN gh "$@"
+}
 
 post_status() {
   local state=$1 description=$2
@@ -65,7 +69,7 @@ ensure_release() {
   local tag=$1 target=$2 title=$3 notes=$4 mark_latest=$5 actual
   local tag_exists=false
   PHASE="checking $tag"
-  if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+  if release_gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
     printf 'El release %s ya existe; no se modifica.\n' "$tag"
     return 0
   fi
@@ -96,8 +100,8 @@ ensure_release() {
   else
     args+=(--latest=false)
   fi
-  gh "${args[@]}"
-  gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
+  release_gh "${args[@]}"
+  release_gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
 }
 
 ensure_release v1.1.0 aacf15d797c91434f5ef7ea1c32a21469a73a870 \
@@ -105,7 +109,7 @@ ensure_release v1.1.0 aacf15d797c91434f5ef7ea1c32a21469a73a870 \
 ensure_release v1.2.0 "$GITHUB_SHA" 'REKON 1.2.0' "$notes_120" true
 
 PHASE=verification
-gh release view v1.1.0 --repo "$GITHUB_REPOSITORY" >/dev/null
-gh release view v1.2.0 --repo "$GITHUB_REPOSITORY" >/dev/null
+release_gh release view v1.1.0 --repo "$GITHUB_REPOSITORY" >/dev/null
+release_gh release view v1.2.0 --repo "$GITHUB_REPOSITORY" >/dev/null
 post_status success 'v1.1.0 and v1.2.0 published'
 trap - ERR

@@ -104,5 +104,6 @@ jobs:
 
       - name: Publish verified releases
         env:
-          GH_TOKEN: ${{ secrets.REKON_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TOKEN: ${{ secrets.REKON_RELEASE_TOKEN }}
         run: bash .github/scripts/bootstrap-releases.sh
