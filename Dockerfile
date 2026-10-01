@@ -2,7 +2,7 @@
 
 # Debian is pinned by immutable multi-platform digest. Keep this value aligned
 # with container/versions.env when intentionally refreshing the image.
-FROM debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS tools
+FROM debian:bookworm-20260918-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS tools
 
 ARG DEBIAN_SNAPSHOT=20260803T000000Z
 ARG GO_VERSION=1.26.6
@@ -94,7 +94,7 @@ RUN git init /opt/nuclei-templates \
     && find /opt/nuclei-templates -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
 
 
-FROM debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS runtime
+FROM debian:bookworm-20260918-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
 
 ARG DEBIAN_SNAPSHOT=20260803T000000Z
 ARG REKON_VERSION=1.2.0
